@@ -7,34 +7,28 @@ from urllib.parse import quote, urlencode
 app = Flask(__name__)
 
 # ===================================================================
-# 🔑 پیکربندی محیط تست بازارپی
+# 🔑 پیکربندی محیط تست بازارپی (آدرس ثابت)
 # ===================================================================
-BASE_URL = "https://api.bazaar-pay.ir/badje/v1" 
-# TEST_TOKEN: از نمونه cURL در payment.md استخراج شد
+BASE_URL = "https://api.bazaar-pay.ir/badje/v1"
 TEST_TOKEN = "some_auth_token"  
-# TEST_DESTINATION_NAME: مقدار فرضی - اگر خطا داد باید از پشتیبانی بخواهید
-TEST_DESTINATION_NAME = "test_merchant_name" 
+TEST_DESTINATION_NAME = "test_merchant_name"  
 
-# آدرس عمومی (Public URL) سرور شما که باید توسط Ngrok تنظیم شود
-# اگر متغیر محیطی تنظیم نشود، به صورت پیش‌فرض روی لوکال می‌ماند اما تست پرداخت کار نخواهد کرد.
-YOUR_DOMAIN = os.environ.get("FLASK_PUBLIC_URL", "http://127.0.0.1:5000")
+# آدرس عمومی ثابت Render شما
+# **توجه: اگر آدرس Render شما تغییر کند، باید این مقدار را دستی عوض کنید.**
+YOUR_DOMAIN = "https://alie-0die.onrender.com"
 # ===================================================================
-
-# **************** مسیرهای start_checkout و bazaarpay_callback ****************
-# **************** (کدهای این دو مسیر همان کدهای پاسخ قبلی هستند) **************
 
 @app.route('/api/v1/start_checkout', methods=['POST'])
 def start_checkout():
     """شروع فرآیند پرداخت و دریافت URL هدایت"""
-    # ... (کد start_checkout دقیقا مشابه پاسخ قبلی است) ...
-    # (برای سادگی نمایش اینجا حذف شده است، اما شما کل کد قبلی را قرار دهید)
     try:
         data = request.json
         amount_rial = data.get('amount', 10000)
         user_phone = data.get('phone', '09123456789')
         
+        # ساخت URL Callback
         callback_url_path = url_for('bazaarpay_callback')
-        callback_url = f"{YOUR_DOMAIN}{callback_url_path}" 
+        callback_url = f"{YOUR_DOMAIN}{callback_url_path}"
 
         payload = {
             "checkout_type": "checkout_server_to_server",
@@ -46,16 +40,18 @@ def start_checkout():
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Token {TEST_TOKEN}" 
+            "Authorization": f"Token {TEST_TOKEN}"  # استفاده از توکن فرضی
         }
 
+        # ارسال درخواست به API بازارپی
         response = requests.post(f"{BASE_URL}/init/", headers=headers, data=json.dumps(payload))
-        response.raise_for_status() 
+        response.raise_for_status()
 
         response_data = response.json()
         checkout_token = response_data.get('checkout_token')
         payment_url_base = response_data.get('payment_url')
 
+        # ساخت لینک نهایی پرداخت که شامل token و phone و redirect_url است
         final_payment_url = f"{payment_url_base}?token={checkout_token}&phone={user_phone}&redirect_url={quote(callback_url)}"
         
         return jsonify({
@@ -65,6 +61,7 @@ def start_checkout():
         })
 
     except requests.exceptions.HTTPError as e:
+        # اگر خطا 401 یا 403 باشد، یعنی توکن اشتباه است
         error_message = f"خطای API بازارپی: {e}. (بررسی کنید که TEST_TOKEN و TEST_DESTINATION_NAME صحیح باشند)."
         details = response.text if 'response' in locals() else "No response received."
         return jsonify({"status": "error", "message": error_message, "details": details}), 500
@@ -75,8 +72,6 @@ def start_checkout():
 @app.route('/bazaarpay/callback', methods=['GET', 'POST'])
 def bazaarpay_callback():
     """بررسی وضعیت پرداخت (Trace) و نهایی کردن تراکنش (Commit)"""
-    # ... (کد bazaarpay_callback دقیقا مشابه پاسخ قبلی است) ...
-    # (برای سادگی نمایش اینجا حذف شده است، اما شما کل کد قبلی را قرار دهید)
     checkout_token = request.args.get('token') or request.form.get('token')
         
     if not checkout_token:
@@ -86,11 +81,16 @@ def bazaarpay_callback():
     trace_payload = {"checkout_token": checkout_token}
     
     try:
+        # 1. مرحله Trace: بررسی وضعیت توکن پرداخت
         trace_response = requests.post(trace_url, headers={"Content-Type": "application/json"}, data=json.dumps(trace_payload))
         trace_response.raise_for_status()
         trace_status = trace_response.json().get('status')
         
+        final_status = ""
+        message = ""
+
         if trace_status == 'paid_not_committed':
+            # 2. مرحله Commit: اگر پرداخت انجام شده ولی Commit نشده
             commit_url = f"{BASE_URL}/commit/"
             commit_payload = {"checkout_token": checkout_token}
             commit_headers = {
@@ -100,23 +100,23 @@ def bazaarpay_callback():
             
             commit_response = requests.post(commit_url, headers=commit_headers, data=json.dumps(commit_payload))
             
-            if commit_response.status_code == 204: 
+            if commit_response.status_code == 204:  # 204 No Content یعنی Commit موفقیت‌آمیز است
                 final_status = "success"
-                message = "تراکنش با موفقیت انجام و تأیید شد."
+                message = "تراکنش با موفقیت انجام و تأیید (Commit) شد."
             else:
                 final_status = "error"
-                message = f"پرداخت موفق، اما خطا در تأیید نهایی (Commit). کد: {commit_response.status_code}"
+                message = f"پرداخت موفق، اما خطا در تأیید نهایی (Commit). کد: {commit_response.status_code}. پاسخ: {commit_response.text}"
 
         elif trace_status == 'unpaid':
             final_status = "pending"
-            message = "پرداخت هنوز نهایی نشده است. (ممکن است تا ۱۵ دقیقه طول بکشد)."
+            message = "پرداخت هنوز نهایی نشده است."
         else:
             final_status = "failed"
             message = f"پرداخت ناموفق. وضعیت: {trace_status}"
 
     except requests.exceptions.RequestException as e:
         final_status = "error"
-        message = f"خطا در ارتباط با سرور بازارپی: {e}"
+        message = f"خطا در ارتباط با سرور بازارپی در مرحله Trace یا Commit: {e}"
         
     return f"""
     <html>
@@ -136,7 +136,6 @@ def bazaarpay_callback():
 
 
 if __name__ == '__main__':
-    # این آدرس در ترمینال پرینت می‌شود.
-    print(f"Server is running. Public URL must be set to: {YOUR_DOMAIN}")
+    print(f"Server is running. Public URL is fixed to: {YOUR_DOMAIN}")
     print(f"Test POST endpoint: {YOUR_DOMAIN}/api/v1/start_checkout")
     app.run(host='0.0.0.0', port=5000, debug=True)
