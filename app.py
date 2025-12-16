@@ -10,8 +10,10 @@ app = Flask(__name__)
 # 🔑 پیکربندی محیط تست بازارپی (آدرس ثابت)
 # ===================================================================
 BASE_URL = "https://api.bazaar-pay.ir/badje/v1"
-TEST_TOKEN = "some_auth_token"  # توکن فرضی - اگر خطا داد باید از پشتیبانی بگیرید
-TEST_DESTINATION_NAME = "test_merchant_name"  # Destination Name فرضی
+# توکن فرضی: فقط برای Commit/Refund در کد نگه داشته شده
+TEST_TOKEN = "some_auth_token"
+# Destination Name فرضی: برای Init استفاده می‌شود
+TEST_DESTINATION_NAME = "developers"
 
 # آدرس عمومی ثابت و صحیح Render شما
 YOUR_DOMAIN = "https://6rgalxwl9g.onrender.com"
@@ -21,37 +23,39 @@ YOUR_DOMAIN = "https://6rgalxwl9g.onrender.com"
 def start_checkout():
     """شروع فرآیند پرداخت و دریافت URL هدایت (Initiate Checkout)"""
     try:
-        # 1. دریافت داده‌ها از درخواست POST کلاینت (مثلاً برنامه Cyrus)
+        # 1. دریافت داده‌ها از درخواست POST کلاینت
         data = request.json
         amount_rial = data.get('amount', 10000)
         user_phone = data.get('phone', '09123456789')
         
-        # 2. ساخت URL Callback: آدرسی که بازارپی پس از پرداخت، کاربر را به آن برمی‌گرداند.
+        # 2. ساخت URL Callback
         callback_url_path = url_for('bazaarpay_callback')
         callback_url = f"{YOUR_DOMAIN}{callback_url_path}"
 
+        # 3. ساخت Payload بر اساس مستندات بازارپی
         payload = {
-            "checkout_type": "checkout_server_to_server",
+            # توجه: فیلدها مطابق مستندات به destination و service_name تغییر یافتند
             "amount": amount_rial,
-            "description": "شارژ حساب کاربری Cyrus",
-            "destination_name": TEST_DESTINATION_NAME,
+            "service_name": "شارژ حساب کاربری Cyrus",
+            "destination": TEST_DESTINATION_NAME, 
             "callback_url": callback_url
         }
 
+        # 4. حذف هدر Authorization: Token برای init-checkout (مطابق مستندات)
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Token {TEST_TOKEN}"
+            # Authorization در اینجا نیاز نیست
         }
 
-        # 3. ارسال درخواست به API بازارپی (Init)
-        response = requests.post(f"{BASE_URL}/init/", headers=headers, data=json.dumps(payload))
+        # 5. ارسال درخواست به API بازارپی (Init) با اندپوینت اصلاح شده /checkout/init/
+        response = requests.post(f"{BASE_URL}/checkout/init/", headers=headers, data=json.dumps(payload))
         response.raise_for_status()
 
         response_data = response.json()
         checkout_token = response_data.get('checkout_token')
         payment_url_base = response_data.get('payment_url')
 
-        # 4. ساخت لینک نهایی پرداخت برای هدایت کلاینت
+        # 6. ساخت لینک نهایی پرداخت برای هدایت کلاینت
         final_payment_url = f"{payment_url_base}?token={checkout_token}&phone={user_phone}&redirect_url={quote(callback_url)}"
         
         return jsonify({
@@ -61,8 +65,8 @@ def start_checkout():
         })
 
     except requests.exceptions.HTTPError as e:
-        # رسیدگی به خطاهای API بازارپی (مخصوصاً 401/403 برای توکن اشتباه)
-        error_message = f"خطای API بازارپی: {e}. (بررسی کنید که TEST_TOKEN و TEST_DESTINATION_NAME صحیح باشند)."
+        # نمایش خطای دقیق‌تر API بازارپی
+        error_message = f"خطای API بازارپی: {e}."
         details = response.text if 'response' in locals() else "No response received."
         return jsonify({"status": "error", "message": error_message, "details": details}), 500
     except Exception as e:
@@ -81,7 +85,7 @@ def bazaarpay_callback():
     trace_payload = {"checkout_token": checkout_token}
     
     try:
-        # 1. مرحله Trace: بررسی وضعیت توکن پرداخت
+        # 1. مرحله Trace: بررسی وضعیت توکن پرداخت (بدون نیاز به توکن احراز هویت)
         trace_response = requests.post(trace_url, headers={"Content-Type": "application/json"}, data=json.dumps(trace_payload))
         trace_response.raise_for_status()
         trace_status = trace_response.json().get('status')
@@ -95,12 +99,12 @@ def bazaarpay_callback():
             commit_payload = {"checkout_token": checkout_token}
             commit_headers = {
                 "Content-Type": "application/json",
-                "Authorization": f"Token {TEST_TOKEN}"
+                "Authorization": f"Token {TEST_TOKEN}" # ⬅️ توکن برای Commit نگه داشته شده
             }
             
             commit_response = requests.post(commit_url, headers=commit_headers, data=json.dumps(commit_payload))
             
-            if commit_response.status_code == 204:  # 204 No Content یعنی Commit موفقیت‌آمیز است
+            if commit_response.status_code == 204:
                 final_status = "success"
                 message = "تراکنش با موفقیت انجام و تأیید (Commit) شد."
             else:
@@ -128,7 +132,7 @@ def bazaarpay_callback():
                 <p>پیام: {message}</p>
                 <p>توکن: {checkout_token}</p>
                 <hr>
-                <p>این صفحه جهت نمایش نتیجه سمت سرور شما است. برنامه Cyrus باید این وضعیت را مدیریت کند.</p>
+                <p>این صفحه جهت نمایش نتیجه سمت سرور شما است.</p>
             </div>
         </body>
     </html>
