@@ -10,7 +10,7 @@ app = Flask(__name__)
 # 🔑 پیکربندی محیط تست بازارپی (آدرس ثابت)
 # ===================================================================
 BASE_URL = "https://api.bazaar-pay.ir/badje/v1"
-# توکن فرضی: فقط برای Commit/Refund در کد نگه داشته شده
+# توکن فرضی: فقط برای Commit/Refund استفاده می‌شود
 TEST_TOKEN = "some_auth_token"
 # Destination Name فرضی: برای Init استفاده می‌شود
 TEST_DESTINATION_NAME = "developers"
@@ -34,7 +34,6 @@ def start_checkout():
 
         # 3. ساخت Payload بر اساس مستندات بازارپی
         payload = {
-            # توجه: فیلدها مطابق مستندات به destination و service_name تغییر یافتند
             "amount": amount_rial,
             "service_name": "شارژ حساب کاربری Cyrus",
             "destination": TEST_DESTINATION_NAME, 
@@ -47,16 +46,26 @@ def start_checkout():
             # Authorization در اینجا نیاز نیست
         }
 
-        # 5. ارسال درخواست به API بازارپی (Init) با اندپوینت اصلاح شده /checkout/init/
+        # 5. ارسال درخواست به API بازارپی (Init)
         response = requests.post(f"{BASE_URL}/checkout/init/", headers=headers, data=json.dumps(payload))
         response.raise_for_status()
 
         response_data = response.json()
         checkout_token = response_data.get('checkout_token')
-        payment_url_base = response_data.get('payment_url')
+        payment_url_base = response_data.get('payment_url') # این لینک خودش شامل ?token=... است
 
-        # 6. ساخت لینک نهایی پرداخت برای هدایت کلاینت
-        final_payment_url = f"{payment_url_base}?token={checkout_token}&phone={user_phone}&redirect_url={quote(callback_url)}"
+        # 6. ساخت لینک نهایی پرداخت (اصلاح شده)
+        # فقط پارامترهای اضافی (phone و redirect_url) را با & به لینک پایه اضافه می‌کنیم.
+        
+        query_params = {
+            "phone": user_phone,
+            "redirect_url": callback_url
+        }
+        
+        encoded_params = urlencode(query_params, quote_via=quote)
+
+        # ترکیب لینک پایه و پارامترهای اضافی (با & به جای ؟)
+        final_payment_url = f"{payment_url_base}&{encoded_params}"
         
         return jsonify({
             "status": "success",
@@ -65,7 +74,6 @@ def start_checkout():
         })
 
     except requests.exceptions.HTTPError as e:
-        # نمایش خطای دقیق‌تر API بازارپی
         error_message = f"خطای API بازارپی: {e}."
         details = response.text if 'response' in locals() else "No response received."
         return jsonify({"status": "error", "message": error_message, "details": details}), 500
