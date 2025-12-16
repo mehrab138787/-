@@ -10,23 +10,23 @@ app = Flask(__name__)
 # 🔑 پیکربندی محیط تست بازارپی (آدرس ثابت)
 # ===================================================================
 BASE_URL = "https://api.bazaar-pay.ir/badje/v1"
-TEST_TOKEN = "some_auth_token"  
-TEST_DESTINATION_NAME = "test_merchant_name"  
+TEST_TOKEN = "some_auth_token"  # توکن فرضی - اگر خطا داد باید از پشتیبانی بگیرید
+TEST_DESTINATION_NAME = "test_merchant_name"  # Destination Name فرضی
 
-# آدرس عمومی ثابت Render شما
-# **توجه: اگر آدرس Render شما تغییر کند، باید این مقدار را دستی عوض کنید.**
-YOUR_DOMAIN = "https://alie-0die.onrender.com"
+# آدرس عمومی ثابت و صحیح Render شما
+YOUR_DOMAIN = "https://6rgalxwl9g.onrender.com"
 # ===================================================================
 
 @app.route('/api/v1/start_checkout', methods=['POST'])
 def start_checkout():
-    """شروع فرآیند پرداخت و دریافت URL هدایت"""
+    """شروع فرآیند پرداخت و دریافت URL هدایت (Initiate Checkout)"""
     try:
+        # 1. دریافت داده‌ها از درخواست POST کلاینت (مثلاً برنامه Cyrus)
         data = request.json
         amount_rial = data.get('amount', 10000)
         user_phone = data.get('phone', '09123456789')
         
-        # ساخت URL Callback
+        # 2. ساخت URL Callback: آدرسی که بازارپی پس از پرداخت، کاربر را به آن برمی‌گرداند.
         callback_url_path = url_for('bazaarpay_callback')
         callback_url = f"{YOUR_DOMAIN}{callback_url_path}"
 
@@ -40,10 +40,10 @@ def start_checkout():
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Token {TEST_TOKEN}"  # استفاده از توکن فرضی
+            "Authorization": f"Token {TEST_TOKEN}"
         }
 
-        # ارسال درخواست به API بازارپی
+        # 3. ارسال درخواست به API بازارپی (Init)
         response = requests.post(f"{BASE_URL}/init/", headers=headers, data=json.dumps(payload))
         response.raise_for_status()
 
@@ -51,7 +51,7 @@ def start_checkout():
         checkout_token = response_data.get('checkout_token')
         payment_url_base = response_data.get('payment_url')
 
-        # ساخت لینک نهایی پرداخت که شامل token و phone و redirect_url است
+        # 4. ساخت لینک نهایی پرداخت برای هدایت کلاینت
         final_payment_url = f"{payment_url_base}?token={checkout_token}&phone={user_phone}&redirect_url={quote(callback_url)}"
         
         return jsonify({
@@ -61,7 +61,7 @@ def start_checkout():
         })
 
     except requests.exceptions.HTTPError as e:
-        # اگر خطا 401 یا 403 باشد، یعنی توکن اشتباه است
+        # رسیدگی به خطاهای API بازارپی (مخصوصاً 401/403 برای توکن اشتباه)
         error_message = f"خطای API بازارپی: {e}. (بررسی کنید که TEST_TOKEN و TEST_DESTINATION_NAME صحیح باشند)."
         details = response.text if 'response' in locals() else "No response received."
         return jsonify({"status": "error", "message": error_message, "details": details}), 500
